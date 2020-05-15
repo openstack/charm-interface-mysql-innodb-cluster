@@ -14,6 +14,7 @@
 
 from charms import reactive
 import charmhelpers.contrib.network.ip as ch_net_ip
+import charmhelpers.core as ch_core
 
 
 class MySQLInnoDBClusterPeer(reactive.Endpoint):
@@ -36,7 +37,8 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
     @property
     def peer_relation(self):
         # Get the first relation object as we only have one relation to peers
-        return self.relations[0]
+        for relation in self.relations:
+            return relation
 
     def available(self):
         if len(self.all_joined_units) < (self.minimum_cluster_size - 1):
@@ -50,6 +52,12 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
                 return False
         return True
 
+    def set_or_clear_available(self):
+        if self.available():
+            reactive.set_flag(self.expand_name('{endpoint_name}.available'))
+        else:
+            reactive.clear_flag(self.expand_name('{endpoint_name}.available'))
+
     def clustered(self):
         if len(self.all_joined_units) < (self.minimum_cluster_size - 1):
             return False
@@ -60,8 +68,9 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
 
     @reactive.when('endpoint.{endpoint_name}.joined')
     def joined(self):
-        reactive.set_flag(self.expand_name('{endpoint_name}.connected'))
         self.set_ingress_address()
+        reactive.set_flag(self.expand_name('{endpoint_name}.connected'))
+        self.set_or_clear_available()
 
     @reactive.when('endpoint.{endpoint_name}.changed')
     def changed(self):
@@ -82,25 +91,28 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
             for flag in flags:
                 reactive.clear_flag(flag)
 
-        if self.available():
-            reactive.set_flag(self.expand_name('{endpoint_name}.available'))
-        else:
-            reactive.clear_flag(self.expand_name('{endpoint_name}.available'))
+        self.set_or_clear_available()
 
         if self.clustered():
             reactive.set_flag(self.expand_name('{endpoint_name}.clustered'))
         else:
             reactive.clear_flag(self.expand_name('{endpoint_name}.clustered'))
 
-    @reactive.when_any('endpoint.{endpoint_name}.broken',
-                       'endpoint.{endpoint_name}.departed')
-    def departed(self):
+    def remove(self):
         flags = (
             self.expand_name('{endpoint_name}.connected'),
             self.expand_name('{endpoint_name}.available'),
         )
         for flag in flags:
             reactive.clear_flag(flag)
+
+    @reactive.when('endpoint.{endpoint_name}.departed')
+    def departed(self):
+        self.remove()
+
+    @reactive.when('endpoint.{endpoint_name}.broken')
+    def broken(self):
+        self.remove()
 
     def set_cluster_connection_info(
             self, cluster_address, cluster_user, cluster_password):
@@ -116,6 +128,11 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
         :returns: None, this function is called for its side effect
         :rtype: None
         """
+        if not self.peer_relation:
+            ch_core.hookenv.log(
+                "No mysql-inndb-cluster peer relation: possibly departing.",
+                "WARNING")
+            return
         self.peer_relation.to_publish['cluster-address'] = cluster_address
         self.peer_relation.to_publish['cluster-user'] = cluster_user
         self.peer_relation.to_publish['cluster-password'] = cluster_password
@@ -127,6 +144,11 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
         :returns: None, this function is called for its side effect
         :rtype: None
         """
+        if not self.peer_relation:
+            ch_core.hookenv.log(
+                "No mysql-inndb-cluster peer relation: possibly departing.",
+                "WARNING")
+            return
         self.peer_relation.to_publish['unit-configure-ready'] = True
 
     def set_unit_clustered(self):
@@ -136,4 +158,9 @@ class MySQLInnoDBClusterPeer(reactive.Endpoint):
         :returns: None, this function is called for its side effect
         :rtype: None
         """
+        if not self.peer_relation:
+            ch_core.hookenv.log(
+                "No mysql-inndb-cluster peer relation: possibly departing.",
+                "WARNING")
+            return
         self.peer_relation.to_publish['unit-clustered'] = True
